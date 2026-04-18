@@ -3,7 +3,7 @@
 import typer
 
 from stowk8s import __version__
-from stowk8s.commands import hello, helm, image
+from stowk8s.commands import helm, image
 
 main = typer.Typer(
     name="stowk8s",
@@ -12,7 +12,6 @@ main = typer.Typer(
     rich_markup_mode="rich",
 )
 
-main.add_typer(hello.app, name="hello", help="Hello world commands.")
 main.add_typer(helm.app, name="helm", help="Work with Helm chart dependencies.")
 main.add_typer(image.app, name="image", help="Inspect image dependencies of Helm charts.")
 
@@ -45,7 +44,7 @@ def list_commands(ctx: typer.Context) -> None:
     table.add_column("Command", style="green")
     table.add_column("Description", style="white")
 
-    for cmd_name in ["hello", "helm", "list", "version"]:
+    for cmd_name in ["helm", "list", "version"]:
         table.add_row("stowk8s", cmd_name, f"Run 'stowk8s {cmd_name} --help' for details")
 
     console.print(table)

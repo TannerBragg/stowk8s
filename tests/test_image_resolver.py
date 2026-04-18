@@ -1,0 +1,370 @@
+"""Tests for the image_resolver module."""
+
+import subprocess
+import sys
+from pathlib import Path
+from unittest.mock import patch, MagicMock
+import tempfile
+
+import io
+import pytest
+
+from stowk8s.utils.image_resolver import (
+    check_helm_installed,
+    run_dependency_update,
+    pull_oci_dependency,
+    extract_tgz_dependency,
+    extract_local_dependency_path,
+    parse_image_annotations,
+    walk_dependency_tree,
+    ImageDependency,
+)
+
+
+def test_check_helm_installed_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("stowk8s.utils.image_resolver.shutil.which", lambda x: "/usr/bin/helm")
+    assert check_helm_installed() is True
+
+
+def test_check_helm_installed_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("stowk8s.utils.image_resolver.shutil.which", lambda x: None)
+    assert check_helm_installed() is False
+
+
+def test_run_dependency_update(monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_run = MagicMock(return_value=subprocess.CompletedProcess(["helm", "dep", "up"], 0, "ok", ""))
+    monkeypatch.setattr("stowk8s.utils.image_resolver.subprocess.run", mock_run)
+    result = run_dependency_update(Path("/fake"))
+    assert result.returncode == 0
+    mock_run.assert_called_once()
+    assert "helm" in mock_run.call_args[0][0][0]
+
+
+def test_pull_oci_non_oci(monkeypatch: pytest.MonkeyPatch) -> None:
+    dep = {"name": "test", "repository": "https://example.com/charts"}
+    with tempfile.TemporaryDirectory() as tmp:
+        assert pull_oci_dependency(dep, Path(tmp)) is None
+
+
+def test_pull_oci_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    dep = {"name": "my-chart", "version": "1.0.0", "repository": "oci://example.com/charts"}
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        (tmp_path / "my-chart-1.0.0").mkdir()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = type("Result", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+            result = pull_oci_dependency(dep, tmp_path)
+            assert result is not None
+            assert "my-chart-1.0.0" in str(result)
+
+
+def test_pull_oci_subprocess_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    dep = {"name": "my-chart", "version": "1.0.0", "repository": "oci://example.com/charts"}
+    with tempfile.TemporaryDirectory() as tmp:
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = type("Result", (), {"returncode": 1, "stderr": "failed", "stdout": ""})()
+            result = pull_oci_dependency(dep, Path(tmp))
+            assert result is None
+
+
+def test_pull_oci_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    dep = {"name": "my-chart", "version": "1.0.0", "repository": "oci://example.com/charts"}
+    with tempfile.TemporaryDirectory() as tmp:
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("helm", 120)):
+            result = pull_oci_dependency(dep, Path(tmp))
+            assert result is None
+
+
+def test_pull_oci_file_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    dep = {"name": "my-chart", "version": "1.0.0", "repository": "oci://example.com/charts"}
+    with tempfile.TemporaryDirectory() as tmp:
+        with patch("subprocess.run", side_effect=FileNotFoundError()):
+            result = pull_oci_dependency(dep, Path(tmp))
+            assert result is None
+
+
+def test_pull_oci_fallback_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test fallback when name-version dir doesn't exist."""
+    dep = {"name": "my-chart", "version": "1.0.0", "repository": "oci://example.com/charts"}
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        # Create just name dir
+        (tmp_path / "my-chart").mkdir()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = type("Result", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+            result = pull_oci_dependency(dep, tmp_path)
+            assert result is not None
+            assert "my-chart" in str(result)
+
+
+def test_pull_oci_fallback_only_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test fallback to single dir in tmp."""
+    dep = {"name": "orphan", "version": "1.0.0", "repository": "oci://example.com/charts"}
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        (tmp_path / "orphan-subdir").mkdir()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = type("Result", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+            result = pull_oci_dependency(dep, tmp_path)
+            assert result is not None
+
+
+def test_extract_tgz_no_charts_dir(tmp_path: Path) -> None:
+    dep = {"name": "my-chart", "version": "1.0.0"}
+    assert extract_tgz_dependency(dep, tmp_path) is None
+
+
+def test_extract_tgz_no_tgz_file(tmp_path: Path) -> None:
+    dep = {"name": "my-chart", "version": "1.0.0"}
+    charts_dir = tmp_path / "charts"
+    charts_dir.mkdir()
+    assert extract_tgz_dependency(dep, tmp_path) is None
+
+
+def test_extract_tgz_success(tmp_path: Path) -> None:
+    dep = {"name": "my-chart", "version": "1.0.0"}
+    charts_dir = tmp_path / "charts"
+    charts_dir.mkdir()
+    # Create a fake tgz with Chart.yaml inside
+    import tarfile
+    tgz_path = charts_dir / "my-chart-1.0.0.tgz"
+    with tarfile.open(tgz_path, "w:gz") as tar:
+        # Add a file that simulates Chart.yaml in root of tar
+        data = b"apiVersion: v2\nname: my-chart\n"
+        info = tarfile.TarInfo(name="Chart.yaml")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    result = extract_tgz_dependency(dep, tmp_path)
+    assert result is not None
+    assert result.name == "Chart.yaml"
+
+
+def test_extract_tgz_wildcard_match(tmp_path: Path) -> None:
+    """Test wildcard version matching for tgz files."""
+    dep = {"name": "my-chart", "version": "1.0.0"}
+    charts_dir = tmp_path / "charts"
+    charts_dir.mkdir()
+    import tarfile
+    tgz_path = charts_dir / "my-chart-2.0.0.tgz"
+    with tarfile.open(tgz_path, "w:gz") as tar:
+        data = b"apiVersion: v2\nname: my-chart\n"
+        info = tarfile.TarInfo(name="Chart.yaml")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    result = extract_tgz_dependency(dep, tmp_path)
+    assert result is not None
+
+
+def test_extract_tgz_nested(tmp_path: Path) -> None:
+    """Test extraction where Chart.yaml is in a nested directory."""
+    dep = {"name": "my-chart", "version": "1.0.0"}
+    charts_dir = tmp_path / "charts"
+    charts_dir.mkdir()
+    import tarfile
+    tgz_path = charts_dir / "my-chart-1.0.0.tgz"
+    with tarfile.open(tgz_path, "w:gz") as tar:
+        data = b"apiVersion: v2\nname: my-chart\n"
+        info = tarfile.TarInfo(name="my-chart-1.0.0/Chart.yaml")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    result = extract_tgz_dependency(dep, tmp_path)
+    assert result is not None
+    assert "Chart.yaml" in str(result) or "my-chart-1.0.0" in str(result)
+
+
+def test_extract_tgz_bad_tarfile(tmp_path: Path) -> None:
+    """Test handling of corrupt tarball."""
+    dep = {"name": "my-chart", "version": "1.0.0"}
+    charts_dir = tmp_path / "charts"
+    charts_dir.mkdir()
+    # Write invalid gzip data
+    tgz_path = charts_dir / "my-chart-1.0.0.tgz"
+    tgz_path.write_bytes(b"not-a-tarball")
+    result = extract_tgz_dependency(dep, tmp_path)
+    assert result is None
+
+
+def test_extract_local_no_charts_dir(tmp_path: Path) -> None:
+    dep = {"name": "my-chart", "version": "1.0.0"}
+    assert extract_local_dependency_path(dep, tmp_path) is None
+
+
+def test_extract_local_name_version(tmp_path: Path) -> None:
+    dep = {"name": "my-chart", "version": "1.0.0"}
+    charts_dir = tmp_path / "charts"
+    charts_dir.mkdir()
+    (charts_dir / "my-chart-1.0.0" / "Chart.yaml").parent.mkdir(parents=True)
+    (charts_dir / "my-chart-1.0.0" / "Chart.yaml").write_text("apiVersion: v2\n")
+    result = extract_local_dependency_path(dep, tmp_path)
+    assert result is not None
+
+
+def test_extract_local_name_only(tmp_path: Path) -> None:
+    dep = {"name": "my-chart", "version": "1.0.0"}
+    charts_dir = tmp_path / "charts"
+    charts_dir.mkdir()
+    (charts_dir / "my-chart" / "Chart.yaml").parent.mkdir(parents=True)
+    (charts_dir / "my-chart" / "Chart.yaml").write_text("apiVersion: v2\n")
+    result = extract_local_dependency_path(dep, tmp_path)
+    assert result is not None
+
+
+def test_extract_local_wildcard(tmp_path: Path) -> None:
+    dep = {"name": "my-chart", "version": ">=1.0.0"}
+    charts_dir = tmp_path / "charts"
+    charts_dir.mkdir()
+    (charts_dir / "my-chart-2.0.0" / "Chart.yaml").parent.mkdir(parents=True)
+    (charts_dir / "my-chart-2.0.0" / "Chart.yaml").write_text("apiVersion: v2\n")
+    result = extract_local_dependency_path(dep, tmp_path)
+    assert result is not None
+
+
+def test_parse_image_annotations_helm_sh_images(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test parsing helm.sh/images annotation."""
+    chart_data = {
+        "name": "test-chart",
+        "annotations": {
+            "helm.sh/images": '[{"name": "nginx", "tag": "1.25"}]'
+        },
+    }
+    images = parse_image_annotations(chart_data, "test-chart")
+    assert len(images) == 1
+    assert images[0].image_name == "nginx"
+    assert images[0].image_tag == "1.25"
+
+
+def test_parse_image_annotations_container_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test containerImage annotation."""
+    chart_data = {
+        "name": "test-chart",
+        "annotations": {
+            "containerImage": "nginx:1.25",
+        },
+    }
+    images = parse_image_annotations(chart_data, "test-chart")
+    assert len(images) == 1
+    assert images[0].image_name == "nginx:1.25"
+
+
+def test_parse_image_annotations_direct_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test direct image field."""
+    chart_data = {
+        "name": "test-chart",
+        "image": {"name": "myapp", "tag": "2.0"},
+    }
+    images = parse_image_annotations(chart_data, "test-chart")
+    assert len(images) == 1
+    assert images[0].image_name == "myapp"
+    assert images[0].image_tag == "2.0"
+
+
+def test_parse_image_annotations_direct_images_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test direct images list field."""
+    chart_data = {
+        "name": "test-chart",
+        "images": [{"name": "app1", "tag": "1.0"}, {"name": "app2", "tag": "2.0"}],
+    }
+    images = parse_image_annotations(chart_data, "test-chart")
+    assert len(images) == 2
+    assert images[0].image_name == "app1"
+    assert images[1].image_name == "app2"
+
+
+def test_parse_image_annotations_reverse_domain(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test reverse-domain annotation."""
+    chart_data = {
+        "name": "test-chart",
+        "version": "1.0.0",
+        "annotations": {
+            "foo.images.helm.sh/repo/name": "nginx:1.25",
+        },
+    }
+    images = parse_image_annotations(chart_data, "test-chart")
+    assert len(images) == 1
+    assert images[0].image_name == "nginx:1.25"
+
+
+def test_parse_image_annotations_no_annotations(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test chart with no annotations returns empty."""
+    chart_data = {"name": "test-chart"}
+    images = parse_image_annotations(chart_data, "test-chart")
+    assert len(images) == 0
+
+
+def test_parse_image_annotations_json_helm_images(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test parsing JSON list from helm.k8s.io/images."""
+    chart_data = {
+        "name": "test-chart",
+        "annotations": {
+            "helm.k8s.io/images": '["nginx", "redis"]',
+        },
+    }
+    images = parse_image_annotations(chart_data, "test-chart")
+    assert len(images) == 2
+    assert images[0].image_name == "nginx"
+    assert images[1].image_name == "redis"
+
+
+def test_parse_image_annotations_invalid_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test invalid annotation value is handled gracefully."""
+    chart_data = {
+        "name": "test-chart",
+        "annotations": {
+            "helm.sh/images": "not valid json or yaml [[[",
+        },
+    }
+    images = parse_image_annotations(chart_data, "test-chart")
+    assert len(images) == 0
+
+
+def test_walk_dependency_tree_no_chart_yaml(monkeypatch: pytest.MonkeyPatch) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        result = walk_dependency_tree(Path(tmp))
+        assert result == []
+
+
+def test_walk_dependency_tree_empty_chart(monkeypatch: pytest.MonkeyPatch) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        chart_yaml = Path(tmp) / "Chart.yaml"
+        chart_yaml.write_text("apiVersion: v2\nname: test\n")
+        result = walk_dependency_tree(Path(tmp))
+        assert result == []
+
+
+def test_walk_dependency_tree_with_chart(monkeypatch: pytest.MonkeyPatch) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        chart_yaml = Path(tmp) / "Chart.yaml"
+        chart_yaml.write_text("""apiVersion: v2
+name: test-chart
+version: 1.0.0
+images:
+- name: nginx
+  tag: "1.25"
+""")
+        result = walk_dependency_tree(Path(tmp))
+        assert len(result) == 1
+        assert result[0].image_name == "nginx"
+        assert result[0].image_tag == "1.25"
+        assert result[0].source_chart == "test-chart"
+
+
+def test_walk_dependency_tree_null_chart_data(monkeypatch: pytest.MonkeyPatch) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        chart_yaml = Path(tmp) / "Chart.yaml"
+        chart_yaml.write_text("---\n")
+        result = walk_dependency_tree(Path(tmp))
+        assert result == []
+
+
+def test_image_dependency_sources_property() -> None:
+    dep = ImageDependency("chart", "1.0", "nginx", "1.25", "image.name")
+    dep._sources.append("annotations.helm.sh/images")
+    sources = dep.sources
+    assert sources == ["annotations.helm.sh/images", "image.name"]
+
+
+def test_image_dependency_sources_dedup() -> None:
+    dep = ImageDependency("chart", "1.0", "nginx", "1.25", "image.name")
+    dep._sources.append("image.name")
+    sources = dep.sources
+    assert sources == ["image.name"]

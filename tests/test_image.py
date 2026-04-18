@@ -21,7 +21,7 @@ def test_image_list_invalid_dir() -> None:
 
 def test_image_list_no_helm(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that image list fails gracefully when helm is missing."""
-    monkeypatch.setattr("stowk8s.utils.image_resolver.check_helm_installed", lambda: False)
+    monkeypatch.setattr("stowk8s.commands.image.check_helm_installed", lambda: False)
     result = runner.invoke(main, ["image", "list", "-C", str(SAMPLE_CHARTS)])
     assert result.exit_code == 1
     assert "helm is not installed" in result.stdout
@@ -34,15 +34,20 @@ def test_image_list_with_images(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("stowk8s.commands.image.run_dependency_update", lambda *a: fake_result)
     fake_images = [
         ImageDependency("sample-app", "0.1.0", "nginx", "1.25", "image.name"),
-        ImageDependency("nginx-ingress", "4.15.1", "registry.k8s.io/ingress-nginx/controller", "v1.12.1", "annotations.helm.sh/images"),
+        ImageDependency("nginx-ingress", "4.15.1", "bitnami/nginx", "v1.12.1", "annotations.helm.sh/images"),
     ]
+    fake_images[1]._registry = "docker.io"
     monkeypatch.setattr("stowk8s.commands.image.walk_dependency_tree", lambda *a: fake_images)
     result = runner.invoke(main, ["image", "list", "-C", str(SAMPLE_CHARTS)])
     assert result.exit_code == 0
     assert "Image Dependencies" in result.stdout
     assert "nginx" in result.stdout  # appears in Chart and Image columns
     assert "sample-app" in result.stdout
-    assert "nginx-ingress" in result.stdout  # chart name
+    assert "nginx:1.25" in result.stdout  # Image Reference column (short ref, no registry)
+    # Second image has registry — verify Image Reference includes registry prefix
+    assert "docker.io" in result.stdout
+    assert "bitnami/ngi" in result.stdout  # truncated Image Reference starts with registry+image
+    assert "v1.12.1" in result.stdout  # tag is also present
     assert "v1.12.1" in result.stdout  # image tag
 
 

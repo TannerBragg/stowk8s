@@ -40,10 +40,10 @@ def list(
         print_warning("No image dependencies found.")
         raise typer.Exit(code=0)
 
-    rows = [(img.source_chart, img.source_chart_version, img.image_name, img.image_tag, ", ".join(img.sources)) for img in images]
+    rows = [(img.source_chart, img.source_chart_version, img.image_name, img.image_tag, ", ".join(img.sources), img.full_reference) for img in images]
 
     print_styled_table(
-        headers=["Chart", "Version", "Image", "Tag", "Source"],
+        headers=["Chart", "Version", "Image", "Tag", "Source", "Image Reference"],
         rows=rows,
         title="Image Dependencies",
     )

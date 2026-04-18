@@ -22,12 +22,25 @@ class ImageDependency:
     image_tag: str
     source: str
     _sources: list[str] = field(default_factory=list, repr=False)
+    _registry: str = field(default="", repr=False)
 
     @property
     def sources(self) -> list[str]:
         sources = [self.source]
         sources.extend(self._sources)
         return sorted(set(sources))
+
+    @property
+    def full_reference(self) -> str:
+        """Return the full image reference including registry if available."""
+        if self._registry:
+            return f"{self._registry}/{self.image_name}:{self.image_tag}"
+        return f"{self.image_name}:{self.image_tag}"
+
+    @property
+    def registry(self) -> str:
+        """Return the dependency registry (e.g. docker.io/bitnami)."""
+        return self._registry
 
 
 def _warn(msg: str) -> None:
@@ -405,9 +418,11 @@ def _walk(chart_data: dict[str, Any], chart_dir: Path, tmp_dir: Path) -> list[Im
             with open(dep_chart) as f:
                 dep_data = yaml.safe_load(f)
             if dep_data:
+                dep_repo = dep.get("repository", "")
                 images = parse_image_annotations(dep_data, chart_name)
                 for img in images:
                     img.source_chart_version = str(dep_data.get("version", chart_version))
+                    img._registry = dep_repo
                     _add_image(img)
                 # Recurse into sub-dependencies
                 for sub in dep_data.get("dependencies", []) or []:
