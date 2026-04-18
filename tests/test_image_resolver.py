@@ -19,6 +19,7 @@ from stowk8s.utils.image_resolver import (
     walk_dependency_tree,
     ImageDependency,
 )
+from stowk8s.strategies.helm_template import HelmTemplateStrategy, _collect_images, _extract_from_containers
 
 
 def test_check_helm_installed_true(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -136,7 +137,8 @@ def test_extract_tgz_success(tmp_path: Path) -> None:
         tar.addfile(info, io.BytesIO(data))
     result = extract_tgz_dependency(dep, tmp_path)
     assert result is not None
-    assert result.name == "Chart.yaml"
+    assert result.is_dir()
+    assert (result / "Chart.yaml").exists()
 
 
 def test_extract_tgz_wildcard_match(tmp_path: Path) -> None:
@@ -368,3 +370,128 @@ def test_image_dependency_sources_dedup() -> None:
     dep._sources.append("image.name")
     sources = dep.sources
     assert sources == ["image.name"]
+
+
+# --- helm-template strategy tests ---
+
+
+def test_collect_images_deployment() -> None:
+    doc = {
+        "kind": "Deployment",
+        "metadata": {"name": "my-deploy"},
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [{"name": "web", "image": "nginx:1.25"}, {"name": "sidecar", "image": "envoy:v1.28"}],
+                    "initContainers": [{"name": "init", "image": "busybox:1.36"}],
+                }
+            }
+        },
+    }
+    images = _collect_images([doc])
+    assert len(images) == 3
+    names = {(i.image_name, i.image_tag) for i in images}
+    assert ("nginx", "1.25") in names
+    assert ("envoy", "v1.28") in names
+    assert ("busybox", "1.36") in names
+
+
+def test_collect_images_cronjob() -> None:
+    doc = {
+        "kind": "CronJob",
+        "metadata": {"name": "backup"},
+        "spec": {
+            "jobTemplate": {
+                "spec": {
+                    "containers": [{"name": "backup-ctr", "image": "restic/restic:0.16"}],
+                }
+            }
+        },
+    }
+    images = _collect_images([doc])
+    assert len(images) == 1
+    assert images[0].image_name == "restic/restic"
+    assert images[0].image_tag == "0.16"
+
+
+def test_collect_images_pod() -> None:
+    doc = {
+        "kind": "Pod",
+        "metadata": {"name": "debug-pod"},
+        "spec": {"containers": [{"name": "shell", "image": "alpine:3.18"}]},
+    }
+    images = _collect_images([doc])
+    assert len(images) == 1
+
+
+def test_collect_images_unsupported_kind() -> None:
+    doc = {"kind": "Service", "metadata": {"name": "svc"}}
+    images = _collect_images([doc])
+    assert images == []
+
+
+def test_collect_images_no_image_field() -> None:
+    doc = {
+        "kind": "Deployment",
+        "metadata": {"name": "x"},
+        "spec": {"template": {"spec": {"containers": [{"name": "c"}]}}},
+    }
+    images = _collect_images([doc])
+    assert images == []
+
+
+def test_collect_images_empty_doc() -> None:
+    images = _collect_images([None])
+    assert images == []
+
+    images = _collect_images([])
+    assert images == []
+
+
+def test_helm_template_strategy_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    chart_dir = Path(tempfile.mkdtemp())
+    (chart_dir / "Chart.yaml").write_text("apiVersion: v2\nname: test\n")
+
+    output = """apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-test
+spec:
+  template:
+    spec:
+      containers:
+      - name: app
+        image: myregistry.io/app:2.1
+"""
+    mock_result = type("Result", (), {"returncode": 0, "stderr": "", "stdout": output})()
+    monkeypatch.setattr("subprocess.run", lambda *a, **kw: mock_result)
+
+    strategy = HelmTemplateStrategy()
+    images = strategy.find_images(chart_dir)
+    assert len(images) == 1
+    assert images[0].image_name == "myregistry.io/app"
+    assert images[0].image_tag == "2.1"
+
+
+def test_helm_template_strategy_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    chart_dir = Path(tempfile.mkdtemp())
+    (chart_dir / "Chart.yaml").write_text("apiVersion: v2\nname: test\n")
+
+    mock_result = type("Result", (), {"returncode": 1, "stderr": "helm error", "stdout": ""})()
+    monkeypatch.setattr("subprocess.run", lambda *a, **kw: mock_result)
+
+    strategy = HelmTemplateStrategy()
+    images = strategy.find_images(chart_dir)
+    assert images == []
+
+
+def test_helm_template_strategy_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    chart_dir = Path(tempfile.mkdtemp())
+    (chart_dir / "Chart.yaml").write_text("apiVersion: v2\nname: test\n")
+
+    mock = MagicMock(side_effect=subprocess.TimeoutExpired(["helm"], 120))
+    monkeypatch.setattr("stowk8s.strategies.helm_template.subprocess.run", mock)
+
+    strategy = HelmTemplateStrategy()
+    images = strategy.find_images(chart_dir)
+    assert images == []

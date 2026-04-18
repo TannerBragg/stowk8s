@@ -3,7 +3,7 @@
 import typer
 
 from stowk8s.utils.formatter import print_error, print_styled_table, print_warning
-from stowk8s.utils.image_resolver import check_helm_installed, run_dependency_update, walk_dependency_tree
+from stowk8s.utils.image_resolver import check_helm_installed, walk_dependency_tree
 
 app = typer.Typer(
     name="image",
@@ -25,14 +25,8 @@ def list(
         raise typer.Exit(code=1)
 
     if not check_helm_installed():
-        print_error("helm is not installed or not on PATH. " "stowk8s needs helm to fetch OCI chart dependencies.")
+        print_error("helm is not installed or not on PATH.")
         raise typer.Exit(code=1)
-
-    # Run helm dependency update to populate any missing .tgz dependencies
-    result = run_dependency_update(chart_path)
-    if result.returncode != 0:
-        stderr = result.stderr.strip() or result.stdout.strip()
-        print_warning(f"helm dependency update had issues (proceeding anyway):\n{stderr}")
 
     images = walk_dependency_tree(chart_path)
 
