@@ -1,6 +1,0 @@
-dependencies:
-- name: grafana-mimir
-  repository: oci://us-east1-docker.pkg.dev/vmw-app-catalog/hosted-registry-f00e7443adc/charts/photon-5
-  version: 6.0.15
-digest: sha256:3624f9f52ececf6995e82ed02cd09ecab4dac8838367b22b830905adadd604e9
-generated: "2026-04-17T22:49:40.750595036-05:00"

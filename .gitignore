@@ -210,3 +210,7 @@ __marimo__/
 .helm/
 *.tgz
 *.tar.gz
+Chart.lock
+
+#Claude
+.claude/
