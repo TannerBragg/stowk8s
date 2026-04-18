@@ -3,7 +3,7 @@
 import typer
 
 from stowk8s import __version__
-from stowk8s.commands import hello
+from stowk8s.commands import hello, image
 
 main = typer.Typer(
     name="stowk8s",
@@ -13,6 +13,7 @@ main = typer.Typer(
 )
 
 main.add_typer(hello.app, name="hello", help="Hello world commands.")
+main.add_typer(image.app, name="image", help="Inspect image dependencies of Helm charts.")
 
 
 @main.command()
