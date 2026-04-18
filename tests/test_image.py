@@ -30,6 +30,8 @@ def test_image_list_no_helm(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_image_list_with_images(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that image list outputs a table when images are found."""
     monkeypatch.setattr("stowk8s.commands.image.check_helm_installed", lambda: True)
+    fake_result = type("Result", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+    monkeypatch.setattr("stowk8s.commands.image.run_dependency_update", lambda *a: fake_result)
     fake_images = [
         ImageDependency("sample-app", "0.1.0", "nginx", "1.25", "image.name"),
         ImageDependency("nginx-ingress", "4.15.1", "registry.k8s.io/ingress-nginx/controller", "v1.12.1", "annotations.helm.sh/images"),
@@ -47,6 +49,8 @@ def test_image_list_with_images(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_image_list_no_images(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that image list reports nothing found when there are none."""
     monkeypatch.setattr("stowk8s.commands.image.check_helm_installed", lambda: True)
+    fake_result = type("Result", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+    monkeypatch.setattr("stowk8s.commands.image.run_dependency_update", lambda *a: fake_result)
     monkeypatch.setattr("stowk8s.commands.image.walk_dependency_tree", lambda *a: [])
     result = runner.invoke(main, ["image", "list", "-C", str(SAMPLE_CHARTS)])
     assert result.exit_code == 0

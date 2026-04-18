@@ -42,6 +42,23 @@ def check_helm_installed() -> bool:
     return shutil.which("helm") is not None
 
 
+def run_dependency_update(chart_dir: Path) -> subprocess.CompletedProcess[str]:
+    """Run helm dependency update against a chart directory.
+
+    Args:
+        chart_dir: Path to the Helm chart directory.
+
+    Returns:
+        CompletedProcess result from the subprocess call.
+    """
+    return subprocess.run(
+        ["helm", "dependency", "update", str(chart_dir)],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+
+
 def pull_oci_dependency(dep: dict[str, Any], tmp_dir: Path) -> Path | None:
     """Pull an OCI chart dependency and return path to its Chart.yaml directory.
 
@@ -90,6 +107,62 @@ def pull_oci_dependency(dep: dict[str, Any], tmp_dir: Path) -> Path | None:
     # Fall back: find the only directory in tmp_dir
     dirs = [d for d in tmp_dir.iterdir() if d.is_dir()]
     return dirs[0] if dirs else None
+
+
+def extract_tgz_dependency(dep: dict[str, Any], base_dir: Path) -> Path | None:
+    """Extract a .tgz dependency from charts/ and return path to its Chart.yaml.
+
+    Args:
+        dep: Dependency dict from Chart.yaml dependencies list.
+        base_dir: Parent directory to search under.
+
+    Returns:
+        Path to the Chart.yaml if found, None otherwise.
+    """
+    dep_name = dep.get("name", "")
+    dep_version = dep.get("version", "latest")
+    charts_dir = base_dir / "charts"
+
+    if not charts_dir.is_dir():
+        return None
+
+    # Find the tgz file
+    tgz_path = charts_dir / f"{dep_name}-{dep_version}.tgz"
+    if not tgz_path.exists():
+        # Try wildcard match for version ranges
+        for child in sorted(charts_dir.iterdir()):
+            if child.is_file() and child.name.startswith(f"{dep_name}-") and child.name.endswith(".tgz"):
+                tgz_path = child
+                break
+
+    if not tgz_path.exists():
+        return None
+
+    # Extract to a temporary directory within charts/
+    tmp_extract = charts_dir / f".stowk8s-{dep_name}-{dep_version}"
+    tmp_extract.mkdir(parents=True, exist_ok=True)
+
+    try:
+        import tarfile
+
+        with tarfile.open(tgz_path, "r:gz") as tar:
+            tar.extractall(str(tmp_extract))
+        # Find the Chart.yaml
+        chart_yaml = tmp_extract / "Chart.yaml"
+        if chart_yaml.exists():
+            return chart_yaml
+        # Might be nested one level deep
+        for child in tmp_extract.iterdir():
+            if child.is_dir():
+                chart_yaml = child / "Chart.yaml"
+                if chart_yaml.exists():
+                    return child
+    except (tarfile.TarError, OSError) as exc:
+        _warn(f"Failed to extract {tgz_path}: {exc}")
+    finally:
+        shutil.rmtree(tmp_extract, ignore_errors=True)
+
+    return None
 
 
 def extract_local_dependency_path(dep: dict[str, Any], base_dir: Path) -> Path | None:
@@ -320,9 +393,13 @@ def _walk(chart_data: dict[str, Any], chart_dir: Path, tmp_dir: Path) -> list[Im
         if dep.get("repository", "").startswith("oci://"):
             dep_path = pull_oci_dependency(dep, Path(tmp_dir))
         else:
-            local = extract_local_dependency_path(dep, chart_dir)
-            if local:
-                dep_path = local.parent
+            tgz = extract_tgz_dependency(dep, chart_dir)
+            if tgz:
+                dep_path = tgz.parent
+            else:
+                local = extract_local_dependency_path(dep, chart_dir)
+                if local:
+                    dep_path = local.parent
 
         if dep_path and (dep_chart := dep_path / "Chart.yaml").exists():
             with open(dep_chart) as f:
