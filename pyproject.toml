@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "stowk8s"
+version = "0.1.0"
+description = "CLI Application to make helm charts and dependent images portable"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+
+dependencies = [
+    "typer[all]>=0.12.0",
+    "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.4.0",
+]
+
+[project.scripts]
+stowk8s = "stowk8s.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stowk8s"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
