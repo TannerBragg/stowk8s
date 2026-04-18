@@ -1,0 +1,59 @@
+k8s-monitoring:
+  # -- Cluster identification
+  cluster:
+    name: "my-production-cluster"
+
+  # -- Destinations (v4: defined as a map)
+  # Add your specific endpoints here.
+  destinations:
+    # Example: Grafana Cloud Metrics
+    hostedMetrics:
+      type: prometheus
+      url: https://prometheus-us-central1.grafana.net/api/prom/push
+      auth:
+        type: basic
+        username: "YOUR_USERNAME"
+        password: "YOUR_PASSWORD"
+    
+    # Example: Grafana Cloud Logs
+    hostedLogs:
+      type: loki
+      url: https://logs-prod-001.grafana.net/loki/api/v1/push
+      auth:
+        type: basic
+        username: "YOUR_USERNAME"
+        password: "YOUR_PASSWORD"
+
+  # -- Feature Enablement
+  # Enabled features define what data is collected.
+  clusterMetrics:
+    enabled: true
+    collector: alloy-metrics  # Options: alloy-metrics or alloy-singleton
+  hostMetrics:
+    enabled: true
+    collector: alloy-metrics  # Options: alloy-metrics or alloy-singleton
+  podLogsViaLoki:
+    enabled: true
+    collector: alloy-logs  # Options: alloy-metrics or alloy-singleton
+
+  # -- Telemetry Services (v4: deployed separately under this key)
+  # This handles the deployment of the underlying exporters.
+  telemetryServices:
+    kube-state-metrics:
+      deploy: true
+    node-exporter:
+      deploy: true
+    opencost:
+      deploy: false
+
+  # -- Collectors (v4: defined as a map of instances)
+  # You can define multiple collectors here.
+  collectors:
+    alloy-metrics:
+      presets: 
+        - clustered
+        - statefulset
+  # -- End of k8s-monitoring values.yaml
+
+    alloy-logs:
+      presets: [filesystem-log-reader]
