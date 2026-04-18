@@ -52,31 +52,31 @@ def _parse_chart_yaml(chart_data: dict[str, Any], chart_name: str, chart_version
 
     for key in ("helm.sh/images", "helm.k8s.io/images"):
         if val := annotations.get(key):
-            images.extend(_parse_image_value(str(val), chart_name, f"annotations.{key}"))
+            images.extend(_parse_image_value(str(val), chart_name, f"annotations.{key}", chart_version))
 
     if val := annotations.get("images"):
-        images.extend(_parse_image_value(str(val), chart_name, "annotations.images"))
+        images.extend(_parse_image_value(str(val), chart_name, "annotations.images", chart_version))
 
     for key in ("containerImage",):
         if val := annotations.get(key):
-            img = _make_image(chart_name, val, f"annotations.{key}")
+            img = _make_image(chart_name, val, f"annotations.{key}", chart_version)
             if img:
                 img.source_chart_version = chart_version
                 images.append(img)
 
     if val := chart_data.get("image"):
-        img = _make_image(chart_name, val, "image")
+        img = _make_image(chart_name, val, "image", chart_version)
         if img:
             img.source_chart_version = chart_version
             images.append(img)
 
     if val := chart_data.get("images"):
-        images.extend(_parse_images_list(val, chart_name, "images"))
+        images.extend(_parse_images_list(val, chart_name, "images", chart_version))
 
     return images
 
 
-def _make_image(chart_name: str, value: Any, source: str) -> ImageDependency | None:
+def _make_image(chart_name: str, value: Any, source: str, chart_version: str = "") -> ImageDependency | None:
     if isinstance(value, dict):
         name = value.get("name", value.get("repo", ""))
         tag = value.get("tag", value.get("version", ""))
@@ -88,7 +88,7 @@ def _make_image(chart_name: str, value: Any, source: str) -> ImageDependency | N
     if name:
         return ImageDependency(
             source_chart=chart_name,
-            source_chart_version="",
+            source_chart_version=chart_version,
             image_name=str(name),
             image_tag=str(tag),
             source=source,
@@ -96,7 +96,7 @@ def _make_image(chart_name: str, value: Any, source: str) -> ImageDependency | N
     return None
 
 
-def _parse_image_value(value: str, chart_name: str, source: str) -> list[ImageDependency]:
+def _parse_image_value(value: str, chart_name: str, source: str, chart_version: str = "") -> list[ImageDependency]:
     """Parse a JSON or YAML list from a string."""
     images: list[ImageDependency] = []
     try:
@@ -119,7 +119,7 @@ def _parse_image_value(value: str, chart_name: str, source: str) -> list[ImageDe
             if name:
                 images.append(ImageDependency(
                     source_chart=chart_name,
-                    source_chart_version="",
+                    source_chart_version=chart_version,
                     image_name=str(name),
                     image_tag=str(tag),
                     source=source,
@@ -130,7 +130,7 @@ def _parse_image_value(value: str, chart_name: str, source: str) -> list[ImageDe
         if name:
             images.append(ImageDependency(
                 source_chart=chart_name,
-                source_chart_version="",
+                source_chart_version=chart_version,
                 image_name=str(name),
                 image_tag=str(tag),
                 source=source,
@@ -138,7 +138,7 @@ def _parse_image_value(value: str, chart_name: str, source: str) -> list[ImageDe
     return images
 
 
-def _parse_images_list(images: Any, chart_name: str, source: str) -> list[ImageDependency]:
+def _parse_images_list(images: Any, chart_name: str, source: str, chart_version: str = "") -> list[ImageDependency]:
     results = []
     if not isinstance(images, list):
         return results
@@ -154,7 +154,7 @@ def _parse_images_list(images: Any, chart_name: str, source: str) -> list[ImageD
         if name:
             results.append(ImageDependency(
                 source_chart=chart_name,
-                source_chart_version="",
+                source_chart_version=chart_version,
                 image_name=str(name),
                 image_tag=str(tag),
                 source=source,
@@ -183,13 +183,24 @@ def _collect_images(documents: list[Any]) -> list[ImageDependency]:
             spec = (((doc.get("spec") or {}).get("template") or {}).get("spec")) or {}
 
         source = f"{doc.get('kind', 'Unknown')}/{doc.get('metadata', {}).get('name', '?')}"
+        # Extract chart name/version from helm.sh/chart label (format: chart-name-version)
+        labels = (doc.get("metadata") or {}).get("labels", {}) or {}
+        helm_chart = labels.get("helm.sh/chart", "")
+        chart_name = ""
+        chart_version = ""
+        if helm_chart:
+            last_hyphen = helm_chart.rfind("-")
+            if last_hyphen > 0:
+                chart_name = helm_chart[:last_hyphen]
+                chart_version = helm_chart[last_hyphen + 1:]
         for key in _CONTAINER_PATHS:
-            _extract_from_containers(spec.get(key, []) or [], source, images)
+            _extract_from_containers(spec.get(key, []) or [], source, images, chart_name, chart_version)
     return images
 
 
 def _extract_from_containers(
     containers: list[Any], source: str, images: list[ImageDependency],
+    chart_name: str = "", chart_version: str = "",
 ) -> None:
     for c in containers:
         if not isinstance(c, dict):
@@ -204,8 +215,8 @@ def _extract_from_containers(
         else:
             img_name, tag = image, ""
         images.append(ImageDependency(
-            source_chart="",
-            source_chart_version="",
+            source_chart=chart_name,
+            source_chart_version=chart_version,
             image_name=img_name,
             image_tag=tag,
             source=source,
