@@ -88,7 +88,7 @@ def extract_tgz_dependencies(chart_dir: Path) -> list[Path]:
             else:
                 dep_name = stem
                 dep_version = "latest"
-            extracted = extract_tgz_dependency({"name": dep_name, "version": dep_version}, charts_dir)
+            extracted = extract_tgz_dependency({"name": dep_name, "version": dep_version}, chart_dir)
             if extracted and extracted.is_dir():
                 chart_dirs.append(extracted)
             child.unlink()
