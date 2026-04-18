@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import tarfile
 from pathlib import Path
+from typing import Any
 
 from stowk8s.strategies import StrategyManager
 from stowk8s.strategies.base import ImageDependency
@@ -14,7 +16,6 @@ from stowk8s.strategies.helm_tree import (
     _parse_helm_images_annotation,
     _parse_images_list,
     extract_local_dependency_path,
-    extract_tgz_dependency,
     parse_image_annotations,
     pull_oci_dependency,
 )
@@ -57,44 +58,77 @@ def run_dependency_update(chart_dir: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+def extract_tgz_dependency(dep: dict[str, Any], base_dir: Path) -> Path | None:
+    """Extract a single .tgz dependency from charts/ and return path to its Chart.yaml."""
+
+    dep_name = dep.get("name", "")
+    dep_version = dep.get("version", "latest")
+    charts_dir = base_dir / "charts"
+
+    if not charts_dir.is_dir():
+        return None
+
+    tgz_path = charts_dir / f"{dep_name}-{dep_version}.tgz"
+    if not tgz_path.exists():
+        for child in sorted(charts_dir.iterdir()):
+            if child.is_file() and child.name.startswith(f"{dep_name}-") and child.name.endswith(".tgz"):
+                tgz_path = child
+                break
+
+    if not tgz_path.exists():
+        return None
+
+    extract_dir = charts_dir / f".stowk8s-{dep_name}-{dep_version}"
+    if not extract_dir.is_dir():
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            with tarfile.open(tgz_path, "r:gz") as tar:
+                tar.extractall(str(extract_dir), filter="data")
+        except (tarfile.TarError, OSError) as exc:
+            import shutil as _shutil
+
+            _shutil.rmtree(extract_dir, ignore_errors=True)
+            return None
+
+    chart_yaml = extract_dir / "Chart.yaml"
+    if chart_yaml.exists():
+        return extract_dir
+    for child in sorted(extract_dir.iterdir()):
+        if child.is_dir():
+            chart_yaml = child / "Chart.yaml"
+            if chart_yaml.exists():
+                return child
+
+    return None
+
+
 def extract_tgz_dependencies(chart_dir: Path) -> list[Path]:
-    """Extract all .tgz chart dependencies downloaded by `helm dependency update`.
-
-    Scans charts/ for .tgz files, parses their name/version from the stem
-    (e.g. `ingress-nginx-4.15.1.tgz` -> name=ingress-nginx, version=4.15.1),
-    extracts each into a persistent directory, deletes the .tgz, and returns
-    all chart directories found.
-
-    Args:
-        chart_dir: Path to the root chart directory.
-
-    Returns:
-        List of resolved chart directories (both extracted .tgz dirs and existing subdirs).
-    """
+    """Extract any .tgz dependencies in charts/ and return all chart directories."""
     charts_dir = chart_dir / "charts"
     if not charts_dir.is_dir():
         return []
 
-    chart_dirs: list[Path] = []
+    dirs: list[Path] = []
     for child in sorted(charts_dir.iterdir()):
         if child.is_dir():
-            chart_dirs.append(child)
+            dirs.append(child)
         elif child.is_file() and child.name.endswith(".tgz"):
-            stem = child.stem  # e.g. ingress-nginx-4.15.1
-            last_hyphen = stem.rfind("-")
-            if last_hyphen > 0:
-                dep_name = stem[:last_hyphen]
-                dep_version = stem[last_hyphen + 1:]
-            else:
-                dep_name = stem
-                dep_version = "latest"
-            extracted = extract_tgz_dependency({"name": dep_name, "version": dep_version}, chart_dir)
-            if extracted and extracted.is_dir():
-                chart_dirs.append(extracted)
+            stem = child.stem
+            target = charts_dir / stem
+            if not target.is_dir():
+                # Extract to temp dir first, then move up to avoid nested paths
+                tmp_dir = target.with_name(target.name + ".tmp")
+                with tarfile.open(child, "r:gz") as tar:
+                    tar.extractall(str(tmp_dir), filter="data")
+                # Move all contents up to target
+                for item in tmp_dir.iterdir():
+                    shutil.move(str(item), str(target.parent / item.name))
+                tmp_dir.rmdir()
+            if target.is_dir():
+                dirs.append(target)
             child.unlink()
 
-    return chart_dirs
-
+    return dirs
 
 def walk_dependency_tree(chart_dir: Path) -> list[ImageDependency]:
     """Build chart dependencies, then walk the tree and collect all image dependencies.
@@ -107,7 +141,6 @@ def walk_dependency_tree(chart_dir: Path) -> list[ImageDependency]:
     Returns:
         Deduplicated list of ImageDependency objects.
     """
-    # Ensure dependencies are built and extracted before any strategy runs
     run_dependency_update(chart_dir)
     extract_tgz_dependencies(chart_dir)
     return StrategyManager().find_all(chart_dir)

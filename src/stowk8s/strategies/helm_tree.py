@@ -6,7 +6,6 @@ import json
 import subprocess
 import sys
 import tarfile
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -56,54 +55,6 @@ def pull_oci_dependency(dep: dict[str, Any], tmp_dir: Path) -> Path | None:
     return dirs[0] if dirs else None
 
 
-def extract_tgz_dependency(dep: dict[str, Any], base_dir: Path) -> Path | None:
-    """Extract a .tgz dependency from charts/ and return path to its Chart.yaml.
-
-    The extracted data is persisted to charts/.stowk8s-{name}-{version}/
-    and must be cleaned up by the caller when done.
-    """
-    dep_name = dep.get("name", "")
-    dep_version = dep.get("version", "latest")
-    charts_dir = base_dir / "charts"
-
-    if not charts_dir.is_dir():
-        return None
-
-    tgz_path = charts_dir / f"{dep_name}-{dep_version}.tgz"
-    if not tgz_path.exists():
-        for child in sorted(charts_dir.iterdir()):
-            if child.is_file() and child.name.startswith(f"{dep_name}-") and child.name.endswith(".tgz"):
-                tgz_path = child
-                break
-
-    if not tgz_path.exists():
-        return None
-
-    extract_dir = charts_dir / f".stowk8s-{dep_name}-{dep_version}"
-    if not extract_dir.is_dir():
-        extract_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            with tarfile.open(tgz_path, "r:gz") as tar:
-                tar.extractall(str(extract_dir), filter="data")
-        except (tarfile.TarError, OSError) as exc:
-            _warn(f"Failed to extract {tgz_path}: {exc}")
-            import shutil as _shutil
-
-            _shutil.rmtree(extract_dir, ignore_errors=True)
-            return None
-
-    chart_yaml = extract_dir / "Chart.yaml"
-    if chart_yaml.exists():
-        return extract_dir
-    for child in sorted(extract_dir.iterdir()):
-        if child.is_dir():
-            chart_yaml = child / "Chart.yaml"
-            if chart_yaml.exists():
-                return child
-
-    return None
-
-
 def extract_local_dependency_path(dep: dict[str, Any], base_dir: Path) -> Path | None:
     """Find a local dependency's Chart.yaml under charts/<name>/ or charts/<name>-<version>/."""
     dep_name = dep.get("name", "")
@@ -125,84 +76,6 @@ def extract_local_dependency_path(dep: dict[str, Any], base_dir: Path) -> Path |
                 return chart_yaml
 
     return None
-
-
-def _run_helm_dependency_update(chart_dir: Path) -> subprocess.CompletedProcess[str]:
-    """Run `helm dependency update` against a chart directory."""
-    return subprocess.run(
-        ["helm", "dependency", "update", str(chart_dir)],
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-
-
-def resolve_all_dependencies(chart_dir: Path, tmp_dir: Path) -> list[Path]:
-    """Run helm dep update and extract all deps, returning chart directories.
-
-    Runs `helm dependency update` which fetches remote deps. Then extracts
-    any .tgz files in charts/ and collects all subdirectories.
-
-    Args:
-        chart_dir: Root chart directory.
-        tmp_dir: Temporary directory for OCI pulls (must already exist).
-
-    Returns:
-        List of resolved dependency chart directories.
-    """
-    deps: list[Path] = []
-
-    # Run helm dep update if Chart.yaml has dependencies
-    root_chart = chart_dir / "Chart.yaml"
-    if root_chart.exists():
-        with open(root_chart) as f:
-            chart_data = yaml.safe_load(f) or {}
-        if chart_data.get("dependencies"):
-            try:
-                _run_helm_dependency_update(chart_dir)
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                pass
-
-    charts_dir = chart_dir / "charts"
-    if charts_dir.is_dir():
-        for child in sorted(charts_dir.iterdir()):
-            if child.is_dir():
-                deps.append(child)
-            elif child.is_file() and child.name.endswith(".tgz"):
-                # Extract: strip .tgz -> "ingress-nginx-4.15.1" -> dep name "ingress-nginx"
-                stem = child.stem  # e.g. ingress-nginx-4.15.1
-                # Find the last hyphen to split name from version
-                last_hyphen = stem.rfind("-")
-                if last_hyphen > 0:
-                    dep_name = stem[:last_hyphen]
-                    dep_version = stem[last_hyphen + 1:]
-                else:
-                    dep_name = stem
-                    dep_version = "latest"
-                extracted = extract_tgz_dependency({"name": dep_name, "version": dep_version}, chart_dir)
-                if extracted and extracted.is_dir():
-                    deps.append(extracted)
-                child.unlink()
-
-    # Pull OCI deps that didn't resolve via helm
-    if root_chart.exists():
-        with open(root_chart) as f:
-            chart_data = yaml.safe_load(f) or {}
-        for dep in chart_data.get("dependencies", []) or []:
-            repo = dep.get("repository", "")
-            dep_name = dep.get("name", "unknown")
-            dep_version = dep.get("version", "latest")
-
-            if repo.startswith("oci://"):
-                dep_path = pull_oci_dependency(dep, tmp_dir)
-                if dep_path and dep_path.is_dir():
-                    deps.append(dep_path)
-            elif not (charts_dir / f"{dep_name}-{dep_version}").is_dir():
-                local = extract_local_dependency_path(dep, charts_dir)
-                if local and local.is_dir():
-                    deps.append(local)
-
-    return deps
 
 
 def _parse_helm_images_annotation(value: str, chart_name: str, source: str) -> list[ImageDependency]:

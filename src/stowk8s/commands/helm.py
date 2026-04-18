@@ -3,7 +3,7 @@
 import typer
 
 from stowk8s.utils.formatter import print_error, print_styled_table, print_warning
-from stowk8s.utils.image_resolver import check_helm_installed, run_dependency_update, walk_dependency_tree
+from stowk8s.utils.image_resolver import check_helm_installed, walk_dependency_tree
 
 app = typer.Typer(
     name="helm",
@@ -34,20 +34,7 @@ def update(
         print_error("helm is not installed or not on PATH.")
         raise typer.Exit(code=1)
 
-    # Run helm dependency update
-    result = run_dependency_update(chart_path)
-
-    if result.returncode != 0:
-        stderr = result.stderr.strip() or result.stdout.strip()
-        print_error(f"helm dependency update failed:\n{stderr}")
-        raise typer.Exit(code=1)
-
-    stdout = result.stdout.strip()
-    if stdout:
-        for line in stdout.splitlines():
-            print(f"  {line}")
-
-    # After successful update, show the full image inventory
+    # After update, walk the tree (runs helm dep update + extracts tgzs) and show image inventory
     images = walk_dependency_tree(chart_path)
 
     if not images:

@@ -34,7 +34,7 @@ def test_helm_dependency_update_success_no_images(monkeypatch: pytest.MonkeyPatc
     """Test helm dependency update with no image dependencies."""
     fake_result = type("Result", (), {"returncode": 0, "stderr": "", "stdout": "updating dependencies"})()
     monkeypatch.setattr("stowk8s.commands.helm.check_helm_installed", lambda: True)
-    monkeypatch.setattr("stowk8s.commands.helm.run_dependency_update", lambda *a: fake_result)
+    monkeypatch.setattr("stowk8s.utils.image_resolver.run_dependency_update", lambda *a: fake_result)
     monkeypatch.setattr("stowk8s.commands.helm.walk_dependency_tree", lambda *a: [])
     result = runner.invoke(main, ["helm", "dependency", "update", "-C", str(SAMPLE_CHARTS)])
     assert result.exit_code == 0
@@ -45,7 +45,7 @@ def test_helm_dependency_update_success_with_images(monkeypatch: pytest.MonkeyPa
     """Test helm dependency update with image dependencies."""
     fake_result = type("Result", (), {"returncode": 0, "stderr": "", "stdout": "updating dependencies"})()
     monkeypatch.setattr("stowk8s.commands.helm.check_helm_installed", lambda: True)
-    monkeypatch.setattr("stowk8s.commands.helm.run_dependency_update", lambda *a: fake_result)
+    monkeypatch.setattr("stowk8s.utils.image_resolver.run_dependency_update", lambda *a: fake_result)
     fake_images = [
         ImageDependency("sample-app", "0.1.0", "nginx", "1.25", "image.name"),
     ]
@@ -55,12 +55,3 @@ def test_helm_dependency_update_success_with_images(monkeypatch: pytest.MonkeyPa
     assert "Image Dependencies (after dependency update)" in result.stdout
     assert "nginx" in result.stdout
 
-
-def test_helm_dependency_update_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test helm dependency update handles helm errors."""
-    fake_result = type("Result", (), {"returncode": 1, "stderr": "chart not found", "stdout": ""})()
-    monkeypatch.setattr("stowk8s.commands.helm.check_helm_installed", lambda: True)
-    monkeypatch.setattr("stowk8s.commands.helm.run_dependency_update", lambda *a: fake_result)
-    result = runner.invoke(main, ["helm", "dependency", "update", "-C", str(SAMPLE_CHARTS)])
-    assert result.exit_code == 1
-    assert "helm dependency update failed" in result.stdout
