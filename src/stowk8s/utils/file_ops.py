@@ -51,20 +51,24 @@ def extract_tgz_dependency(dep: dict[str, Any], base_dir: Path) -> Path | None:
     if not tgz_path.exists():
         return None
 
-    extract_dir = charts_dir / f".stowk8s-{dep_name}-{dep_version}"
-    if not extract_dir.is_dir():
-        extract_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            with tarfile.open(tgz_path, "r:gz") as tar:
-                tar.extractall(str(extract_dir), filter="data")
-        except (tarfile.TarError, OSError) as exc:
-            shutil.rmtree(extract_dir, ignore_errors=True)
-            return None
+    # Determine the target chart directory (the .tgz stem without extension)
+    chart_dir = charts_dir / tgz_path.stem
+    if not chart_dir.is_dir():
+        chart_dir.mkdir(parents=True, exist_ok=True)
 
-    chart_yaml = extract_dir / "Chart.yaml"
+    # Extract directly to the chart directory
+    try:
+        with tarfile.open(tgz_path, "r:gz") as tar:
+            tar.extractall(str(chart_dir), filter="data")
+    except (tarfile.TarError, OSError) as exc:
+        # Cleanup: remove the chart directory if extraction failed
+        shutil.rmtree(chart_dir, ignore_errors=True)
+        return None
+
+    chart_yaml = chart_dir / "Chart.yaml"
     if chart_yaml.exists():
-        return extract_dir
-    for child in sorted(extract_dir.iterdir()):
+        return chart_dir
+    for child in sorted(chart_dir.iterdir()):
         if child.is_dir():
             chart_yaml = child / "Chart.yaml"
             if chart_yaml.exists():
@@ -84,17 +88,24 @@ def extract_tgz_dependencies(chart_dir: Path) -> list[Path]:
         if child.is_dir():
             dirs.append(child)
         elif child.is_file() and child.name.endswith(".tgz"):
-            stem = child.stem
-            target = charts_dir / stem
+            # Direct target is the .tgz stem (chart directory)
+            target = charts_dir / child.stem
             if not target.is_dir():
-                tmp_dir = target.with_name(target.name + ".tmp")
+                target.mkdir(parents=True, exist_ok=True)
+
+            # Extract directly to target directory
+            try:
                 with tarfile.open(child, "r:gz") as tar:
-                    tar.extractall(str(tmp_dir), filter="data")
-                for item in tmp_dir.iterdir():
-                    shutil.move(str(item), str(target.parent / item.name))
-                tmp_dir.rmdir()
+                    tar.extractall(str(target), filter="data")
+            except (tarfile.TarError, OSError):
+                # Cleanup: remove the target directory if extraction failed
+                shutil.rmtree(target, ignore_errors=True)
+                continue
+
             if target.is_dir():
                 dirs.append(target)
+
+            # Remove the .tgz file after successful extraction
             child.unlink()
 
     return dirs
