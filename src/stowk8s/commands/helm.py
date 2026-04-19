@@ -3,7 +3,8 @@
 import typer
 
 from stowk8s.utils.formatter import print_error, print_styled_table, print_warning
-from stowk8s.utils.image_resolver import check_helm_installed, walk_dependency_tree
+from stowk8s.utils.helm_utils import check_helm_installed, run_dependency_update
+from stowk8s.utils.file_ops import find_and_extract_targz
 
 app = typer.Typer(
     name="helm",
@@ -16,7 +17,6 @@ dependency = typer.Typer(
     help="Manage chart dependencies.",
     rich_markup_mode="rich",
 )
-
 
 @dependency.command()
 def update(
@@ -34,20 +34,11 @@ def update(
         print_error("helm is not installed or not on PATH.")
         raise typer.Exit(code=1)
 
-    # After update, walk the tree (runs helm dep update + extracts tgzs) and show image inventory
-    images = walk_dependency_tree(chart_path)
-
-    if not images:
-        print_warning("No image dependencies found after update.")
-        raise typer.Exit(code=0)
-
-    rows = [(img.source_chart, img.source_chart_version, img.image_name, img.image_tag, ", ".join(img.sources)) for img in images]
-
-    print_styled_table(
-        headers=["Chart", "Version", "Image", "Tag", "Source"],
-        rows=rows,
-        title="Image Dependencies (after dependency update)",
-    )
-
+    try:
+        run_dependency_update(chart_path)
+        extracted_dirs = find_and_extract_targz(str(chart_dir))
+        print(f"[stowk8s] Extracted {len(extracted_dirs)} chart(s).")
+    except Exception as e:
+        print(f"[stowk8s] WARNING: helm dependency update or extraction failed: {e}")
 
 app.add_typer(dependency, name="dependency", help="Manage chart dependencies.")

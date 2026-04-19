@@ -4,6 +4,7 @@ import typer
 
 from stowk8s.utils.formatter import print_error, print_styled_table, print_warning
 from stowk8s.utils.image_resolver import check_helm_installed, walk_dependency_tree
+from stowk8s.commands.helm import update as helm_update
 
 app = typer.Typer(
     name="image",
@@ -28,6 +29,8 @@ def list(
         print_error("helm is not installed or not on PATH.")
         raise typer.Exit(code=1)
 
+    # Call helm update to update chart dependencies
+    helm_update(str(chart_path))
     try:
         images = walk_dependency_tree(chart_path)
     except OSError as e:

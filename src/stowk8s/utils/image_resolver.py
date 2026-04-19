@@ -14,18 +14,15 @@ from stowk8s.strategies.helm_bsi import (
     parse_image_annotations,
     pull_oci_dependency,
 )
-from stowk8s.utils.file_ops import extract_local_dependency_path, extract_tgz_dependencies, extract_tgz_dependency
 from stowk8s.utils.helm_utils import check_helm_installed, run_dependency_update
+# extract_tgz_dependency and extract_tgz_dependencies have been removed. Use extract_targz and find_and_extract_targz instead.
 
 __all__ = [
     "ImageDependency",
     "check_helm_installed",
-    "extract_local_dependency_path",
-    "extract_tgz_dependency",
-    "extract_tgz_dependencies",
+    "run_dependency_update",
     "parse_image_annotations",
     "pull_oci_dependency",
-    "run_dependency_update",
     "walk_dependency_tree",
     "_make_image",
     "_parse_helm_images_annotation",
@@ -44,6 +41,4 @@ def walk_dependency_tree(chart_dir: Path) -> list[ImageDependency]:
     Returns:
         Deduplicated list of ImageDependency objects.
     """
-    run_dependency_update(chart_dir)
-    extract_tgz_dependencies(chart_dir)
     return StrategyManager().find_all(chart_dir)

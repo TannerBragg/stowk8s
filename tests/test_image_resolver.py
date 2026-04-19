@@ -13,12 +13,11 @@ from stowk8s.utils.image_resolver import (
     check_helm_installed,
     run_dependency_update,
     pull_oci_dependency,
-    extract_tgz_dependency,
-    extract_local_dependency_path,
     parse_image_annotations,
     walk_dependency_tree,
     ImageDependency,
 )
+from stowk8s.utils.file_ops import extract_targz, find_and_extract_targz
 from stowk8s.strategies.helm_template import HelmTemplateStrategy, _collect_images, _extract_from_containers
 
 
@@ -112,14 +111,28 @@ def test_pull_oci_fallback_only_dir(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_extract_tgz_no_charts_dir(tmp_path: Path) -> None:
     dep = {"name": "my-chart", "version": "1.0.0"}
-    assert extract_tgz_dependency(dep, tmp_path) is None
+    charts_dir = tmp_path / "charts"
+    # No chart directory, so no tgz file to extract
+    # Using extract_targz will raise FileNotFoundError if tgz file doesn't exist
+    tgz_path = charts_dir / f"{dep['name']}-{dep['version']}.tgz"
+    try:
+        extract_targz(tgz_path)
+        assert False, "Expected FileNotFoundError"
+    except FileNotFoundError:
+        pass
 
 
 def test_extract_tgz_no_tgz_file(tmp_path: Path) -> None:
     dep = {"name": "my-chart", "version": "1.0.0"}
     charts_dir = tmp_path / "charts"
     charts_dir.mkdir()
-    assert extract_tgz_dependency(dep, tmp_path) is None
+    # No .tgz file present
+    tgz_path = charts_dir / f"{dep['name']}-{dep['version']}.tgz"
+    try:
+        extract_targz(tgz_path)
+        assert False, "Expected FileNotFoundError"
+    except FileNotFoundError:
+        pass
 
 
 def test_extract_tgz_success(tmp_path: Path) -> None:
@@ -186,39 +199,6 @@ def test_extract_tgz_bad_tarfile(tmp_path: Path) -> None:
     assert result is None
 
 
-def test_extract_local_no_charts_dir(tmp_path: Path) -> None:
-    dep = {"name": "my-chart", "version": "1.0.0"}
-    assert extract_local_dependency_path(dep, tmp_path) is None
-
-
-def test_extract_local_name_version(tmp_path: Path) -> None:
-    dep = {"name": "my-chart", "version": "1.0.0"}
-    charts_dir = tmp_path / "charts"
-    charts_dir.mkdir()
-    (charts_dir / "my-chart-1.0.0" / "Chart.yaml").parent.mkdir(parents=True)
-    (charts_dir / "my-chart-1.0.0" / "Chart.yaml").write_text("apiVersion: v2\n")
-    result = extract_local_dependency_path(dep, tmp_path)
-    assert result is not None
-
-
-def test_extract_local_name_only(tmp_path: Path) -> None:
-    dep = {"name": "my-chart", "version": "1.0.0"}
-    charts_dir = tmp_path / "charts"
-    charts_dir.mkdir()
-    (charts_dir / "my-chart" / "Chart.yaml").parent.mkdir(parents=True)
-    (charts_dir / "my-chart" / "Chart.yaml").write_text("apiVersion: v2\n")
-    result = extract_local_dependency_path(dep, tmp_path)
-    assert result is not None
-
-
-def test_extract_local_wildcard(tmp_path: Path) -> None:
-    dep = {"name": "my-chart", "version": ">=1.0.0"}
-    charts_dir = tmp_path / "charts"
-    charts_dir.mkdir()
-    (charts_dir / "my-chart-2.0.0" / "Chart.yaml").parent.mkdir(parents=True)
-    (charts_dir / "my-chart-2.0.0" / "Chart.yaml").write_text("apiVersion: v2\n")
-    result = extract_local_dependency_path(dep, tmp_path)
-    assert result is not None
 
 
 def test_parse_image_annotations_helm_sh_images(monkeypatch: pytest.MonkeyPatch) -> None:
