@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-import tarfile
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -53,29 +51,6 @@ def pull_oci_dependency(dep: dict[str, Any], tmp_dir: Path) -> Path | None:
 
     dirs = [d for d in tmp_dir.iterdir() if d.is_dir()]
     return dirs[0] if dirs else None
-
-
-def extract_local_dependency_path(dep: dict[str, Any], base_dir: Path) -> Path | None:
-    """Find a local dependency's Chart.yaml under charts/<name>/ or charts/<name>-<version>/."""
-    dep_name = dep.get("name", "")
-    dep_version = dep.get("version", "latest")
-    charts_dir = base_dir / "charts"
-
-    if not charts_dir.is_dir():
-        return None
-
-    for candidate in [charts_dir / f"{dep_name}-{dep_version}", charts_dir / dep_name]:
-        chart_yaml = candidate / "Chart.yaml"
-        if chart_yaml.exists():
-            return chart_yaml
-
-    for child in sorted(charts_dir.iterdir()):
-        if child.is_dir() and child.name.startswith(f"{dep_name}-"):
-            chart_yaml = child / "Chart.yaml"
-            if chart_yaml.exists():
-                return chart_yaml
-
-    return None
 
 
 def _parse_helm_images_annotation(value: str, chart_name: str, source: str) -> list[ImageDependency]:
@@ -176,11 +151,11 @@ def parse_image_annotations(chart_data: dict[str, Any], chart_name: str) -> list
     return results
 
 
-@strategy("bsi")
-class HelmTreeStrategy:
+@strategy("helm-bsi")
+class HelmBSIStrategy:
     """Discover images by walking Helm chart dependency trees."""
 
-    name = "bsi"
+    name = "helm-bsi"
 
     def find_images(self, chart_dir: Path) -> list[ImageDependency]:
         chart_yaml_path = chart_dir / "Chart.yaml"

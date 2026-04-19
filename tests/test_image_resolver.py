@@ -23,18 +23,18 @@ from stowk8s.strategies.helm_template import HelmTemplateStrategy, _collect_imag
 
 
 def test_check_helm_installed_true(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("stowk8s.utils.image_resolver.shutil.which", lambda x: "/usr/bin/helm")
+    monkeypatch.setattr("stowk8s.utils.helm_utils.shutil.which", lambda x: "/usr/bin/helm")
     assert check_helm_installed() is True
 
 
 def test_check_helm_installed_false(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("stowk8s.utils.image_resolver.shutil.which", lambda x: None)
+    monkeypatch.setattr("stowk8s.utils.helm_utils.shutil.which", lambda x: None)
     assert check_helm_installed() is False
 
 
 def test_run_dependency_update(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_run = MagicMock(return_value=subprocess.CompletedProcess(["helm", "dep", "up"], 0, "ok", ""))
-    monkeypatch.setattr("stowk8s.utils.image_resolver.subprocess.run", mock_run)
+    monkeypatch.setattr("stowk8s.utils.helm_utils.subprocess.run", mock_run)
     result = run_dependency_update(Path("/fake"))
     assert result.returncode == 0
     mock_run.assert_called_once()

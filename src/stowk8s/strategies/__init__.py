@@ -33,9 +33,29 @@ class StrategyManager:
         return sorted(self._registry)
 
     def find_all(self, chart_dir: Path) -> list[ImageDependency]:
-        """Instantiate every registered strategy and call find_images(), deduplicating by (image_name, image_tag)."""
+        """Instantiate every registered strategy and call find_images(), deduplicating by (image_name, image_tag).
+
+        Strategies are run in priority order: 'helm-template' first, then all others.
+        Images from higher-priority strategies take precedence during deduplication.
+        """
+        # Define priority order: helm-template takes precedence over bsi
+        priority_order = ["helm-template"]
         seen: dict[tuple[str, str], ImageDependency] = {}
-        for cls in self._registry.values():
+
+        # Run high-priority strategies first
+        for name in priority_order:
+            if name in self._registry:
+                cls = self._registry[name]
+                strategy = cls()
+                for img in strategy.find_images(chart_dir):
+                    key = (img.image_name, img.image_tag)
+                    if key not in seen:
+                        seen[key] = img
+
+        # Run remaining strategies
+        for name, cls in self._registry.items():
+            if name in priority_order:
+                continue
             strategy = cls()
             for img in strategy.find_images(chart_dir):
                 key = (img.image_name, img.image_tag)
@@ -47,4 +67,4 @@ class StrategyManager:
 
 
 # Import built-in strategies so they register themselves at import time.
-from stowk8s.strategies import helm_tree, helm_template  # noqa: F401, E402
+from stowk8s.strategies import helm_bsi, helm_template  # noqa: F401, E402

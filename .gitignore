@@ -211,6 +211,7 @@ __marimo__/
 *.tgz
 *.tar.gz
 Chart.lock
+**/charts/
 
 #Claude
 .claude/
