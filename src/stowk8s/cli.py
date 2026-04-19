@@ -1,4 +1,4 @@
-"""Main entry point for the stowk8s CLI mainlication."""
+"""Main entry point for the stowk8s CLI application."""
 
 import typer
 

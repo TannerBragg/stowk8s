@@ -28,7 +28,11 @@ def list(
         print_error("helm is not installed or not on PATH.")
         raise typer.Exit(code=1)
 
-    images = walk_dependency_tree(chart_path)
+    try:
+        images = walk_dependency_tree(chart_path)
+    except OSError as e:
+        print_error(f"Failed to resolve image dependencies: {e}")
+        raise typer.Exit(code=1)
 
     if not images:
         print_warning("No image dependencies found.")
