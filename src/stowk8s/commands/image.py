@@ -13,8 +13,8 @@ app = typer.Typer(
 )
 
 
-@app.command()
-def list(
+@app.command(name="list")
+def list_images(
     chart_dir: str = typer.Option(".", "--chart-dir", "-C", help="Path to the Helm chart directory."),
 ) -> None:
     """List all image dependencies from a Helm chart's dependency tree."""
@@ -41,7 +41,16 @@ def list(
         print_warning("No image dependencies found.")
         raise typer.Exit(code=0)
 
-    rows = [(img.source_chart, img.source_chart_version, img.image_name, img.image_tag, ", ".join(img.sources), img.full_reference) for img in images]
+    # Keep the image with the longest tag for each base (to avoid showing truncated tags)
+    best_by_base = {}
+    for img in images:
+        base = img.image_name
+        current = best_by_base.get(base)
+        if current is None or len(img.image_tag) > len(current.image_tag):
+            best_by_base[base] = img
+    selected_images = list(best_by_base.values())
+
+    rows = [(img.source_chart, img.source_chart_version, img.image_name, img.image_tag, ", ".join(img.sources), img.full_reference) for img in selected_images]
 
     print_styled_table(
         headers=["Chart", "Version", "Image", "Tag", "Source", "Image Reference"],

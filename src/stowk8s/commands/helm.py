@@ -1,10 +1,14 @@
 """Helm chart dependency management commands."""
 
 import typer
+from pathlib import Path
 
 from stowk8s.utils.formatter import print_error, print_styled_table, print_warning
 from stowk8s.utils.helm_utils import check_helm_installed, run_dependency_update
 from stowk8s.utils.file_ops import find_and_extract_targz
+from stowk8s.strategies import StrategyManager
+from stowk8s.strategies.base import ImageDependency
+
 
 app = typer.Typer(
     name="helm",
@@ -18,13 +22,17 @@ dependency = typer.Typer(
     rich_markup_mode="rich",
 )
 
+
+def walk_dependency_tree(chart_dir: str | Path) -> list[ImageDependency]:
+    """Return image dependencies for the chart directory."""
+    return StrategyManager().find_all(Path(chart_dir))
+
+
 @dependency.command()
 def update(
     chart_dir: str = typer.Option(".", "--chart-dir", "-C", help="Path to the Helm chart directory."),
 ) -> None:
     """Update chart dependencies by pulling latest versions."""
-    from pathlib import Path
-
     chart_path = Path(chart_dir).resolve()
     if not chart_path.is_dir():
         print_error(f"Chart directory not found: {chart_path}")

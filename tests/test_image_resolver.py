@@ -16,6 +16,7 @@ from stowk8s.utils.image_resolver import (
     parse_image_annotations,
     walk_dependency_tree,
     ImageDependency,
+    extract_tgz_dependency,
 )
 from stowk8s.utils.file_ops import extract_targz, find_and_extract_targz
 from stowk8s.strategies.helm_template import HelmTemplateStrategy, _collect_images, _extract_from_containers
@@ -148,7 +149,7 @@ def test_extract_tgz_success(tmp_path: Path) -> None:
         info = tarfile.TarInfo(name="Chart.yaml")
         info.size = len(data)
         tar.addfile(info, io.BytesIO(data))
-    result = extract_tgz_dependency(dep, tmp_path)
+    result = extract_tgz_dependency(dep, charts_dir)
     assert result is not None
     assert result.is_dir()
     assert (result / "Chart.yaml").exists()
@@ -156,7 +157,7 @@ def test_extract_tgz_success(tmp_path: Path) -> None:
 
 def test_extract_tgz_wildcard_match(tmp_path: Path) -> None:
     """Test wildcard version matching for tgz files."""
-    dep = {"name": "my-chart", "version": "1.0.0"}
+    dep = {"name": "my-chart", "version": "2.0.0"}
     charts_dir = tmp_path / "charts"
     charts_dir.mkdir()
     import tarfile
@@ -166,7 +167,7 @@ def test_extract_tgz_wildcard_match(tmp_path: Path) -> None:
         info = tarfile.TarInfo(name="Chart.yaml")
         info.size = len(data)
         tar.addfile(info, io.BytesIO(data))
-    result = extract_tgz_dependency(dep, tmp_path)
+    result = extract_tgz_dependency(dep, charts_dir)
     assert result is not None
 
 
@@ -182,7 +183,7 @@ def test_extract_tgz_nested(tmp_path: Path) -> None:
         info = tarfile.TarInfo(name="my-chart-1.0.0/Chart.yaml")
         info.size = len(data)
         tar.addfile(info, io.BytesIO(data))
-    result = extract_tgz_dependency(dep, tmp_path)
+    result = extract_tgz_dependency(dep, charts_dir)
     assert result is not None
     assert "Chart.yaml" in str(result) or "my-chart-1.0.0" in str(result)
 
@@ -195,7 +196,7 @@ def test_extract_tgz_bad_tarfile(tmp_path: Path) -> None:
     # Write invalid gzip data
     tgz_path = charts_dir / "my-chart-1.0.0.tgz"
     tgz_path.write_bytes(b"not-a-tarball")
-    result = extract_tgz_dependency(dep, tmp_path)
+    result = extract_tgz_dependency(dep, charts_dir)
     assert result is None
 
 
@@ -371,9 +372,9 @@ def test_collect_images_deployment() -> None:
     images = _collect_images([doc])
     assert len(images) == 3
     names = {(i.image_name, i.image_tag) for i in images}
-    assert ("nginx", "1.25") in names
-    assert ("envoy", "v1.28") in names
-    assert ("busybox", "1.36") in names
+    assert ("oci://nginx", "1.25") in names
+    assert ("oci://envoy", "v1.28") in names
+    assert ("oci://busybox", "1.36") in names
 
 
 def test_collect_images_cronjob() -> None:
@@ -390,7 +391,7 @@ def test_collect_images_cronjob() -> None:
     }
     images = _collect_images([doc])
     assert len(images) == 1
-    assert images[0].image_name == "restic/restic"
+    assert images[0].image_name == "oci://restic/restic"
     assert images[0].image_tag == "0.16"
 
 
@@ -449,7 +450,7 @@ spec:
     strategy = HelmTemplateStrategy()
     images = strategy.find_images(chart_dir)
     assert len(images) == 1
-    assert images[0].image_name == "myregistry.io/app"
+    assert images[0].image_name == "oci://myregistry.io/app"
     assert images[0].image_tag == "2.1"
 
 

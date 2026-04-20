@@ -69,7 +69,22 @@ def _parse_helm_images_annotation(value: str, chart_name: str, source: str) -> l
         for item in parsed:
             if isinstance(item, dict):
                 name = item.get("name", item.get("repo", ""))
-                tag = item.get("tag", item.get("version", ""))
+                # Extract tag from image field if present, else fallback to tag/version keys
+                image_val = item.get("image")
+                if isinstance(image_val, str):
+                    # Image string format: "repo/path:tag" (may include digest after @)
+                    # Split on ':' to get the tag part after the last colon
+                    parts = image_val.rsplit(":", 1)
+                    if len(parts) == 2:
+                        candidate = parts[1]
+                        # Strip off a potential digest after '@' (e.g., "v1.2.3@sha256:...")
+                        if "@" in candidate:
+                            candidate = candidate.split("@", 1)[0]
+                        tag = candidate
+                    else:
+                        tag = ""
+                else:
+                    tag = item.get("tag", item.get("version", ""))
             else:
                 name = str(item)
                 tag = ""

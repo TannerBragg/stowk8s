@@ -86,6 +86,14 @@ def _make_image(chart_name: str, value: Any, source: str, chart_version: str = "
     else:
         return None
     if name:
+        # Extract tag from name if present and tag is empty
+        if not tag and ':' in name:
+            name_part, tag_part = name.rsplit(':', 1)
+            name = name_part
+            tag = tag_part
+        # Ensure the image reference is prefixed with the OCI scheme
+        if not name.startswith("oci://"):
+            name = f"oci://{name}"
         return ImageDependency(
             source_chart=chart_name,
             source_chart_version=chart_version,
@@ -117,6 +125,14 @@ def _parse_image_value(value: str, chart_name: str, source: str, chart_version: 
                 name = str(item)
                 tag = ""
             if name:
+                # Extract tag from name if present and tag is empty
+                if not tag and ':' in name:
+                    name_part, tag_part = name.rsplit(':', 1)
+                    name = name_part
+                    tag = tag_part
+                # Ensure the image reference is prefixed with the OCI scheme
+                if not name.startswith("oci://"):
+                    name = f"oci://{name}"
                 images.append(ImageDependency(
                     source_chart=chart_name,
                     source_chart_version=chart_version,
@@ -128,6 +144,8 @@ def _parse_image_value(value: str, chart_name: str, source: str, chart_version: 
         name = parsed.get("name", parsed.get("repo", ""))
         tag = parsed.get("tag", parsed.get("version", ""))
         if name:
+            if not name.startswith("oci://"):
+                name = f"oci://{name}"
             images.append(ImageDependency(
                 source_chart=chart_name,
                 source_chart_version=chart_version,
@@ -139,6 +157,7 @@ def _parse_image_value(value: str, chart_name: str, source: str, chart_version: 
 
 
 def _parse_images_list(images: Any, chart_name: str, source: str, chart_version: str = "") -> list[ImageDependency]:
+    """Parse a top-level images list field."""
     results = []
     if not isinstance(images, list):
         return results
@@ -152,6 +171,14 @@ def _parse_images_list(images: Any, chart_name: str, source: str, chart_version:
         else:
             continue
         if name:
+            # Extract tag from name if present and tag is empty
+            if not tag and ':' in name:
+                name_part, tag_part = name.rsplit(':', 1)
+                name = name_part
+                tag = tag_part
+            # Ensure the image reference is prefixed with the OCI scheme
+            if not name.startswith("oci://"):
+                name = f"oci://{name}"
             results.append(ImageDependency(
                 source_chart=chart_name,
                 source_chart_version=chart_version,
@@ -183,7 +210,6 @@ def _collect_images(documents: list[Any]) -> list[ImageDependency]:
             spec = (((doc.get("spec") or {}).get("template") or {}).get("spec")) or {}
 
         source = f"{doc.get('kind', 'Unknown')}/{doc.get('metadata', {}).get('name', '?')}"
-        # Extract chart name/version from helm.sh/chart label (format: chart-name-version)
         labels = (doc.get("metadata") or {}).get("labels", {}) or {}
         helm_chart = labels.get("helm.sh/chart", "")
         chart_name = ""
@@ -214,6 +240,8 @@ def _extract_from_containers(
             img_name, tag = parts[0], parts[1]
         else:
             img_name, tag = image, ""
+        if not img_name.startswith("oci://"):
+            img_name = f"oci://{img_name}"
         images.append(ImageDependency(
             source_chart=chart_name,
             source_chart_version=chart_version,
