@@ -30,3 +30,4 @@ Helm requires the `helm` binary on PATH.
 - Each agent should target a single module/service.
 - Strip unused imports/comments when reading files.
 - Keep context focused on the current command.
+- When possible, use agents for multi-file analysis or complex tasks, delegating work to specialized agents rather than manually reading and editing files.
